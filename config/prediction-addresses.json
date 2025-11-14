@@ -1,0 +1,26 @@
+{
+  "alfajores": {
+    "contractAddress": "",
+    "chainId": 44787,
+    "rpcUrl": "https://alfajores-forno.celo-testnet.org",
+    "minBet": "10000000000000000",
+    "roundDuration": "86400",
+    "updatedAt": ""
+  },
+  "celo": {
+    "contractAddress": "",
+    "chainId": 42220,
+    "rpcUrl": "https://forno.celo.org",
+    "minBet": "10000000000000000",
+    "roundDuration": "86400",
+    "updatedAt": ""
+  },
+  "sepolia": {
+    "contractAddress": "0xbe8fc8f55c108ddedd19cd2d21aac4014d08808b",
+    "chainId": 11142220,
+    "rpcUrl": "https://forno.celo-sepolia.celo-testnet.org",
+    "minBet": "10000000000000000",
+    "roundDuration": "86400",
+    "updatedAt": "2025-11-14T19:33:51.996Z"
+  }
+}

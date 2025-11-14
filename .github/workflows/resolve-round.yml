@@ -1,0 +1,43 @@
+name: Resolve Prediction Round
+
+on:
+  schedule:
+    # Run daily at 12:05 AM UTC (5 minutes past midnight)
+    - cron: "5 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  resolve-round:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve round
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NETWORK: ${{ secrets.NETWORK || 'sepolia' }}
+        run: |
+          cd apps/contracts
+          pnpm resolve-round
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Round resolution failed. Check the logs above for details."
+          exit 1
