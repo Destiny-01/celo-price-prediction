@@ -1,8 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool);
+
+    function balanceOf(address account) external view returns (uint256);
+}
+
 contract SimpleCryptoPrediction {
     address public owner;
+    IERC20 public immutable cUSD;
 
     uint256 public currentRoundId;
     uint256 public roundDuration = 1 days;
@@ -59,8 +72,9 @@ contract SimpleCryptoPrediction {
         uint256 reward
     );
 
-    constructor(int256 initialPrice) {
+    constructor(int256 initialPrice, address _cUSD) {
         owner = msg.sender;
+        cUSD = IERC20(_cUSD);
         _startNewRound(initialPrice);
     }
 
@@ -73,17 +87,23 @@ contract SimpleCryptoPrediction {
         emit RoundStarted(currentRoundId, r.startPrice);
     }
 
-    function placeBet(bool _direction) external payable {
+    function placeBet(bool _direction, uint256 amount) external {
         require(currentRoundId > 0, "No active round");
         Round storage r = rounds[currentRoundId];
         require(r.startTime > 0, "Round not initialized");
         require(r.endTime > 0, "Round not initialized");
         require(block.timestamp < r.endTime, "Round closed");
-        require(msg.value >= minBet, "Low stake");
+        require(amount >= minBet, "Low stake");
         require(r.bets[msg.sender].amount == 0, "Already bet");
 
+        // Transfer cUSD from user to contract
+        require(
+            cUSD.transferFrom(msg.sender, address(this), amount),
+            "Transfer failed"
+        );
+
         r.bets[msg.sender] = Bet({
-            amount: msg.value,
+            amount: amount,
             direction: _direction,
             claimed: false
         });
@@ -92,12 +112,12 @@ contract SimpleCryptoPrediction {
         userRounds[msg.sender].push(currentRoundId);
 
         if (_direction) {
-            r.upPool += msg.value;
+            r.upPool += amount;
         } else {
-            r.downPool += msg.value;
+            r.downPool += amount;
         }
 
-        emit BetPlaced(currentRoundId, msg.sender, _direction, msg.value);
+        emit BetPlaced(currentRoundId, msg.sender, _direction, amount);
     }
 
     function resolveRound(int256 endPrice, int256 nextStartPrice) external {
@@ -138,7 +158,10 @@ contract SimpleCryptoPrediction {
                     }
 
                     b.claimed = true;
-                    payable(player).transfer(reward);
+                    require(
+                        cUSD.transfer(player, reward),
+                        "Reward transfer failed"
+                    );
                     emit RewardPaid(currentRoundId, player, reward);
                 }
             }

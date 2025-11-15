@@ -5,6 +5,11 @@
         "internalType": "int256",
         "name": "initialPrice",
         "type": "int256"
+      },
+      {
+        "internalType": "address",
+        "name": "_cUSD",
+        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
@@ -109,6 +114,19 @@
     ],
     "name": "RoundStarted",
     "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "cUSD",
+    "outputs": [
+      {
+        "internalType": "contract IERC20",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [],
@@ -289,11 +307,16 @@
         "internalType": "bool",
         "name": "_direction",
         "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
       }
     ],
     "name": "placeBet",
     "outputs": [],
-    "stateMutability": "payable",
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

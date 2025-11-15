@@ -29,7 +29,7 @@ const chain: Chain = {
   nativeCurrency: {
     decimals: 18,
     name: "Celo",
-    symbol: "CELO",
+    symbol: "CELO", // Native currency symbol (still CELO for gas)
   },
   rpcUrls: {
     default: { http: [networkConfig.rpcUrl] },

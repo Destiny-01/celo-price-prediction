@@ -7,6 +7,9 @@ import hre from "hardhat";
 const DECIMALS = 8n;
 const INITIAL_PRICE = 30_000n * 10n ** DECIMALS;
 
+// Mock cUSD address for testing (on local network, this can be any valid address)
+const MOCK_CUSD_ADDRESS = "0x0000000000000000000000000000000000000001";
+
 describe("SimpleCryptoPrediction", () => {
   async function deployPredictionFixture() {
     const [owner, alice, bob] = await hre.viem.getWalletClients();
@@ -20,10 +23,11 @@ describe("SimpleCryptoPrediction", () => {
       INITIAL_PRICE.toString(),
       `($${Number(INITIAL_PRICE) / Number(10n ** DECIMALS)})`
     );
+    console.log("Mock cUSD Address:", MOCK_CUSD_ADDRESS);
 
     const prediction = await hre.viem.deployContract(
       "SimpleCryptoPrediction" as any,
-      [INITIAL_PRICE]
+      [INITIAL_PRICE, MOCK_CUSD_ADDRESS] // Pass initialPrice and cUSD address
     );
 
     console.log("Contract deployed at:", prediction.address);

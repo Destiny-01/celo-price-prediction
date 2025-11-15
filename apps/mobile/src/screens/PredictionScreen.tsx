@@ -18,7 +18,7 @@ import { isAddress } from "ethers";
 import {
   fetchCurrentRound,
   fetchUserRounds,
-  formatWeiToCelo,
+  formatWeiToCUSD,
 } from "../api/prediction";
 import { fetchDailyBtcHistory } from "../api/prices";
 import { useCountdown } from "../hooks/useCountdown";
@@ -370,8 +370,8 @@ const formatTimestamp = (timestamp: bigint) => {
   return new Date(Number(timestamp) * 1000).toLocaleString();
 };
 
-const minBetInCelo =
-  minBetWei > 0n ? parseFloat(formatWeiToCelo(minBetWei, 4)) : 0.01;
+const minBetInCUSD =
+  minBetWei > 0n ? parseFloat(formatWeiToCUSD(minBetWei, 4)) : 0.01;
 
 const PredictionScreen = () => {
   const {
@@ -387,7 +387,7 @@ const PredictionScreen = () => {
     placeBet,
   } = useMiniPay();
   const [direction, setDirection] = useState<"up" | "down">("up");
-  const [stake, setStake] = useState<string>(minBetInCelo.toString());
+  const [stake, setStake] = useState<string>(minBetInCUSD.toString());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -435,13 +435,40 @@ const PredictionScreen = () => {
     refetchInterval: 30000,
   });
 
+  // Get cUSD balance from ERC20 token
   const { data: walletBalance, isFetching: fetchingBalance } = useQuery({
     queryKey: ["prediction", "walletBalance", address],
     queryFn: async () => {
       if (!address) {
         return 0n;
       }
-      return publicClient.getBalance({ address: address as `0x${string}` });
+      // Get cUSD address for current network
+      const cUSDAddresses: Record<number, string> = {
+        44787: "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1", // Alfajores
+        42220: "0x765DE816845861e75A25fCA122bb6898B8B1282a", // Mainnet
+        11142220: "0xde9e4c3ce781b4ba68120d6261cbad65ce0ab00b", // Sepolia
+      };
+      const cUSDAddress = cUSDAddresses[predictionNetwork.chain.id];
+      if (!cUSDAddress) return 0n;
+
+      // ERC20 balanceOf ABI
+      const erc20Abi = [
+        {
+          inputs: [{ name: "account", type: "address" }],
+          name: "balanceOf",
+          outputs: [{ name: "", type: "uint256" }],
+          stateMutability: "view",
+          type: "function",
+        },
+      ] as const;
+
+      // Get cUSD balance
+      return (await publicClient.readContract({
+        address: cUSDAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [address as `0x${string}`],
+      })) as bigint;
     },
     enabled: Boolean(address),
     refetchInterval: 60000, // Refresh every 60 seconds instead of 20
@@ -473,7 +500,7 @@ const PredictionScreen = () => {
 
   const walletBalanceLabel =
     walletBalance && walletBalance > 0n
-      ? formatWeiToCelo(walletBalance, 3)
+      ? formatWeiToCUSD(walletBalance, 3)
       : "0.000";
 
   const roundIdLabel = currentRound
@@ -517,8 +544,8 @@ const PredictionScreen = () => {
       };
     }
 
-    const upPool = parseFloat(formatWeiToCelo(currentRound.upPool, 4));
-    const downPool = parseFloat(formatWeiToCelo(currentRound.downPool, 4));
+    const upPool = parseFloat(formatWeiToCUSD(currentRound.upPool, 4));
+    const downPool = parseFloat(formatWeiToCUSD(currentRound.downPool, 4));
     const total = upPool + downPool;
     const safeUpPayout =
       upPool > 0 && Number.isFinite(total / upPool)
@@ -530,10 +557,10 @@ const PredictionScreen = () => {
         : "1.00";
 
     return {
-      upPool: `${formatWeiToCelo(currentRound.upPool)} CELO`,
-      downPool: `${formatWeiToCelo(currentRound.downPool)} CELO`,
-      upPayout: `1 CELO → ${safeUpPayout} CELO`,
-      downPayout: `1 CELO → ${safeDownPayout} CELO`,
+      upPool: `${formatWeiToCUSD(currentRound.upPool)} cUSD`,
+      downPool: `${formatWeiToCUSD(currentRound.downPool)} cUSD`,
+      upPayout: `1 cUSD → ${safeUpPayout} cUSD`,
+      downPayout: `1 cUSD → ${safeDownPayout} cUSD`,
     };
   }, [currentRound]);
 
@@ -585,15 +612,15 @@ const PredictionScreen = () => {
     logger.debug("Parsed stake value", { numericStake, original: stake });
     if (!Number.isFinite(numericStake) || numericStake <= 0) {
       logger.warn("Invalid stake value", { numericStake });
-      Alert.alert("Invalid stake", "Enter a valid CELO amount.");
+      Alert.alert("Invalid stake", "Enter a valid cUSD amount.");
       return;
     }
 
-    if (numericStake < minBetInCelo) {
-      logger.warn("Stake below minimum", { numericStake, minBetInCelo });
+    if (numericStake < minBetInCUSD) {
+      logger.warn("Stake below minimum", { numericStake, minBetInCUSD });
       Alert.alert(
         "Stake too low",
-        `Minimum stake is ${minBetInCelo.toFixed(4)} CELO.`
+        `Minimum stake is ${minBetInCUSD.toFixed(4)} cUSD.`
       );
       return;
     }
@@ -660,7 +687,7 @@ const PredictionScreen = () => {
 
   const betButtonLabel = address
     ? isCorrectNetwork
-      ? `Stake ${stake || "0"} CELO`
+      ? `Stake ${stake || "0"} cUSD`
       : "Switch Network First"
     : `Connect ${walletLabel}`;
 
@@ -692,7 +719,7 @@ const PredictionScreen = () => {
               {address
                 ? fetchingBalance
                   ? "…"
-                  : `${walletBalanceLabel} CELO`
+                  : `${walletBalanceLabel} cUSD`
                 : "--"}
             </Text>
           </View>
@@ -826,61 +853,69 @@ const PredictionScreen = () => {
           })}
         </View>
 
-        {!hasBetInCurrentRound ? (
+        {!hasBetInCurrentRound && (
           <>
             <TextInput
               style={styles.stakeInput}
               keyboardType="decimal-pad"
-              placeholder={`Stake (min ${minBetInCelo.toFixed(2)} CELO)`}
+              placeholder={`Stake (min ${minBetInCUSD.toFixed(2)} cUSD)`}
               placeholderTextColor="#94a3b8"
               value={stake}
               onChangeText={setStake}
             />
             <Text style={styles.helperText}>
-              {`Predicting ${direction.toUpperCase()} · Minimum ${minBetInCelo.toFixed(
+              {`Predicting ${direction.toUpperCase()} · Minimum ${minBetInCUSD.toFixed(
                 2
-              )} CELO`}
+              )} cUSD`}
             </Text>
-
-            <TouchableOpacity
-              style={[
-                styles.stakeButton,
-                {
-                  backgroundColor:
-                    address && isCorrectNetwork
-                      ? "#0ea5e9"
-                      : address && !isCorrectNetwork
-                        ? "#f59e0b"
-                        : "#6366f1",
-                  opacity:
-                    isSubmitting || (address && !isCorrectNetwork) ? 0.7 : 1,
-                },
-              ]}
-              onPress={
-                address && !isCorrectNetwork && walletType === "metamask"
-                  ? switchNetwork
-                  : onPlaceBet
-              }
-              disabled={Boolean(
-                isSubmitting ||
-                  (address && !isCorrectNetwork && walletType !== "metamask")
-              )}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.stakeButtonText}>{betButtonLabel}</Text>
-              )}
-            </TouchableOpacity>
           </>
-        ) : (
-          <View style={[styles.sectionCard, { marginTop: 20 }]}>
-            <Text style={styles.sectionTitle}>Bet Placed</Text>
-            <Text style={styles.sectionSubtitle}>
-              You have already placed a bet in this round. Please wait for the
-              round to resolve.
+        )}
+
+        <TouchableOpacity
+          style={[
+            styles.stakeButton,
+            {
+              backgroundColor: hasBetInCurrentRound
+                ? "#6b7280"
+                : address && isCorrectNetwork
+                  ? "#0ea5e9"
+                  : address && !isCorrectNetwork
+                    ? "#f59e0b"
+                    : "#6366f1",
+              opacity:
+                hasBetInCurrentRound ||
+                isSubmitting ||
+                (address && !isCorrectNetwork)
+                  ? 0.7
+                  : 1,
+            },
+          ]}
+          onPress={
+            hasBetInCurrentRound
+              ? undefined
+              : address && !isCorrectNetwork && walletType === "metamask"
+                ? switchNetwork
+                : onPlaceBet
+          }
+          disabled={Boolean(
+            hasBetInCurrentRound ||
+              isSubmitting ||
+              (address && !isCorrectNetwork && walletType !== "metamask")
+          )}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.stakeButtonText}>
+              {hasBetInCurrentRound ? "Already Staked" : betButtonLabel}
             </Text>
-          </View>
+          )}
+        </TouchableOpacity>
+
+        {hasBetInCurrentRound && (
+          <Text style={styles.helperText}>
+            You have already placed a bet in this round
+          </Text>
         )}
         {!providerReady && address ? (
           <Text style={styles.helperText}>
@@ -955,7 +990,7 @@ const PredictionScreen = () => {
                     </Text>
                     <Text style={styles.historyMeta}>
                       {item.bet.direction ? "Up" : "Down"} ·{" "}
-                      {formatWeiToCelo(item.bet.amount)} CELO
+                      {formatWeiToCUSD(item.bet.amount)} cUSD
                     </Text>
                     <Text style={styles.historyMeta}>
                       {item.round.resolved

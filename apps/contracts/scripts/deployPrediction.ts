@@ -67,6 +67,13 @@ async function fetchBtcPriceFromCoinGecko(): Promise<bigint> {
   }
 }
 
+// cUSD token addresses for each network
+const cUSDAddresses: Record<string, string> = {
+  alfajores: "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1",
+  celo: "0x765DE816845861e75A25fCA122bb6898B8B1282a",
+  sepolia: "0xde9e4c3ce781b4ba68120d6261cbad65ce0ab00b",
+};
+
 async function main() {
   // Fetch initial price from CoinGecko, or use environment variable as fallback
   const initialPrice = await fetchBtcPriceFromCoinGecko();
@@ -74,12 +81,21 @@ async function main() {
     throw new Error("Failed to fetch BTC price from CoinGecko");
   }
 
+  const networkName = hre.network.name;
+  const cUSDAddress = cUSDAddresses[networkName];
+  if (!cUSDAddress) {
+    throw new Error(
+      `cUSD address not configured for network: ${networkName}. Please add it to the deployment script.`
+    );
+  }
+
   const [deployer] = await hre.viem.getWalletClients();
   console.log(`Deploying with account: ${deployer.account.address}`);
+  console.log(`Using cUSD address: ${cUSDAddress}`);
 
   const prediction = await hre.viem.deployContract(
     "SimpleCryptoPrediction" as any,
-    [initialPrice]
+    [initialPrice, cUSDAddress] // Pass initialPrice and cUSD address
   );
 
   const contractAddress = prediction.address;

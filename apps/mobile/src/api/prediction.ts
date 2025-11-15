@@ -242,7 +242,7 @@ export const fetchUserRounds = async (
   }
 };
 
-export const formatWeiToCelo = (value: bigint, decimals = 4) => {
+export const formatWeiToCUSD = (value: bigint, decimals = 4) => {
   const formatted = parseFloat(formatEther(value));
   return formatted.toFixed(decimals);
 };

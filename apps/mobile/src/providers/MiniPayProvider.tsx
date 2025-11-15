@@ -7,18 +7,20 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import {
-  BrowserProvider,
-  Contract,
-  parseEther,
-  type Eip1193Provider,
-} from "ethers";
+import { BrowserProvider, type Eip1193Provider } from "ethers";
 import {
   predictionAbi,
   predictionContractAddress,
   predictionNetwork,
 } from "../config/contracts";
 import { logger } from "../utils/logger";
+import {
+  parseEther,
+  createWalletClient,
+  custom,
+  getContract,
+  type Address,
+} from "viem";
 
 type WalletType = "minipay" | "metamask" | null;
 
@@ -32,7 +34,7 @@ type MiniPayContextValue = {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   switchNetwork: () => Promise<void>;
-  placeBet: (direction: boolean, amountInCelo: string) => Promise<string>;
+  placeBet: (direction: boolean, amountInCUSD: string) => Promise<string>;
 };
 
 const MiniPayContext = createContext<MiniPayContextValue | undefined>(
@@ -80,6 +82,13 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
 
   const targetChainId = predictionNetwork.chain.id;
   const targetChainIdHex = `0x${targetChainId.toString(16)}`;
+
+  // cUSD token addresses for fee currency (MiniPay requirement)
+  const cUSDAddresses: Record<number, Address> = {
+    44787: "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1", // Alfajores
+    42220: "0x765DE816845861e75A25fCA122bb6898B8B1282a", // Mainnet
+    11142220: "0xde9e4c3ce781b4ba68120d6261cbad65ce0ab00b", // Sepolia (same as Alfajores)
+  };
 
   // Network configuration for MetaMask (supports all Celo networks)
   const celoNetworkConfig = useMemo(() => {
@@ -384,11 +393,16 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
   }, [address, targetChainId, disconnect, isConnecting, switchNetwork]);
 
   const placeBet = useCallback(
-    async (direction: boolean, amountInCelo: string) => {
-      if (!browserProvider || !address) {
+    async (direction: boolean, amountInCUSD: string) => {
+      if (!address) {
         throw new Error(
           `Connect ${walletType === "metamask" ? "MetaMask" : "MiniPay"} before placing a bet.`
         );
+      }
+
+      const win = (globalThis as any).window;
+      if (!win?.ethereum) {
+        throw new Error("No Ethereum provider found.");
       }
 
       // Verify network for MetaMask
@@ -404,57 +418,115 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
         );
       }
 
-      const value = parseEther(amountInCelo);
+      // Parse amount to wei (same as parseEther, but for cUSD we use same decimals)
+      const amount = parseEther(amountInCUSD.toString());
       logger.info("Preparing bet transaction", {
         direction,
-        amountInCelo,
-        valueWei: value.toString(),
+        amountInCUSD,
+        amountWei: amount.toString(),
         contractAddress: predictionContractAddress,
+        isMiniPay,
       });
 
       try {
-        const signer = await browserProvider.getSigner();
-        const contract = new Contract(
+        // Create viem wallet client
+        const walletClient = createWalletClient({
+          chain: predictionNetwork.chain,
+          transport: custom(win.ethereum),
+        });
+
+        // Get account from wallet
+        const [account] = await walletClient.getAddresses();
+        if (!account) {
+          throw new Error("No account found in wallet");
+        }
+
+        // Get cUSD address
+        const cUSDAddress = cUSDAddresses[targetChainId];
+        if (!cUSDAddress) {
+          throw new Error("cUSD address not found for chain");
+        }
+
+        // ERC20 ABI for approve
+        const erc20Abi = [
+          {
+            inputs: [
+              { name: "spender", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            name: "approve",
+            outputs: [{ name: "", type: "bool" }],
+            stateMutability: "nonpayable",
+            type: "function",
+          },
+        ] as const;
+
+        // Step 1: Approve cUSD transfer
+        logger.info("Approving cUSD transfer", {
+          cUSDAddress,
           predictionContractAddress,
-          predictionAbi as any,
-          signer
+          amount: amount.toString(),
+        });
+
+        const cUSDContract = getContract({
+          address: cUSDAddress,
+          abi: erc20Abi,
+          client: walletClient,
+        });
+
+        const approveTxHash = await cUSDContract.write.approve(
+          [predictionContractAddress as Address, amount] as readonly [
+            Address,
+            bigint,
+          ],
+          {
+            // @ts-ignore - feeCurrency is a Celo-specific property
+            feeCurrency: cUSDAddress,
+          }
         );
 
-        // Skip contract state check to avoid RPC simulation issues
-        // The contract will validate the state during execution
-        logger.info("Preparing transaction without state checks");
+        logger.info("Waiting for approve confirmation", { approveTxHash });
+        if (browserProvider) {
+          await browserProvider.waitForTransaction(approveTxHash);
+        }
+        logger.info("cUSD approval confirmed");
 
-        // Use interface.encodeFunctionData to manually encode the call
-        // This bypasses ethers.js gas estimation which triggers RPC simulation
-        const iface = contract.interface;
-        const data = iface.encodeFunctionData("placeBet", [direction]);
-
-        logger.info("Transaction data encoded", {
-          function: "placeBet",
+        // Step 2: Place bet using writeContract
+        logger.info("Placing bet", {
           direction,
-          value: value.toString(),
+          amount: amount.toString(),
+          account,
         });
 
-        // Send transaction directly with explicit gas limit
-        // IMPORTANT: RPC providers may still simulate transactions for validation
-        // If simulation fails due to contract state issues, the transaction will fail
-        // This is a known issue with some RPC providers that validate before accepting
-        const txResponse = await signer.sendTransaction({
-          to: predictionContractAddress,
-          data: data,
-          value: value,
-          gasLimit: 500000n, // Explicit gas limit - high enough for most operations
+        const predictionContract = getContract({
+          address: predictionContractAddress as Address,
+          abi: predictionAbi as any,
+          client: walletClient,
         });
 
-        logger.info("Transaction sent", { txHash: txResponse.hash });
+        const txHash = await predictionContract.write.placeBet(
+          [direction, amount],
+          {
+            account,
+            // @ts-ignore - feeCurrency is a Celo-specific property
+            feeCurrency: cUSDAddress,
+          }
+        );
 
-        const receipt = await txResponse.wait();
-        logger.info("Transaction confirmed", {
-          txHash: receipt?.hash ?? txResponse.hash,
-          blockNumber: receipt?.blockNumber?.toString(),
-        });
+        logger.info("Bet transaction sent", { txHash });
 
-        return receipt?.hash ?? txResponse.hash;
+        // Wait for confirmation
+        if (browserProvider) {
+          const receipt = await browserProvider.waitForTransaction(txHash);
+          if (receipt) {
+            logger.info("Bet confirmed", {
+              txHash: receipt.hash,
+              blockNumber: receipt.blockNumber?.toString(),
+            });
+          }
+        }
+
+        return txHash;
       } catch (error: any) {
         logger.error("Bet transaction failed", {
           error: error.message,
@@ -481,7 +553,18 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
           throw new Error("You have already placed a bet in this round.");
         }
         if (error.message?.includes("Low stake")) {
-          throw new Error(`Bet amount is too low. Minimum bet required.`);
+          const errorDetails = {
+            amountInCUSD,
+            amountWei: amount.toString(),
+            minBet: "0.01 cUSD (10000000000000000 wei)",
+            isMiniPay,
+            feeCurrency: isMiniPay ? cUSDAddresses[targetChainId] : "N/A",
+          };
+          logger.error("Low stake error details", errorDetails);
+          throw new Error(
+            `Transaction failed: Low stake error. Sent: ${amountInCUSD} cUSD (${amount.toString()} wei), Minimum: 0.01 cUSD. ` +
+              `This might be a MiniPay transaction formatting issue. Check transaction on block explorer.`
+          );
         }
         if (error.code === -32603 || error.code === "UNKNOWN_ERROR") {
           // Check if it's a divide by zero error from RPC simulation
@@ -521,7 +604,16 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
         throw error;
       }
     },
-    [address, browserProvider, walletType, chainId, targetChainId]
+    [
+      address,
+      browserProvider,
+      walletType,
+      isMiniPay,
+      chainId,
+      targetChainId,
+      predictionContractAddress,
+      predictionNetwork.chain,
+    ]
   );
 
   const contextValue = useMemo<MiniPayContextValue>(
