@@ -482,6 +482,7 @@ export const MiniPayProvider = ({ children }: MiniPayProviderProps) => {
           {
             // @ts-ignore - feeCurrency is a Celo-specific property
             feeCurrency: cUSDAddress,
+            account,
           }
         );
 
