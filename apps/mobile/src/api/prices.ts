@@ -86,7 +86,7 @@ export const fetchDailyBtcHistory = async (): Promise<PricePoint[]> => {
       const response = await axios.get(COINGECKO_ENDPOINT, {
         params: {
           vs_currency: "usd",
-          days: 1,
+          days: 0.020833, // 30 minutes (30/1440 = 0.020833 days)
         },
         timeout: 10000, // 10 second timeout
         headers: {

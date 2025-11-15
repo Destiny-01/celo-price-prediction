@@ -258,6 +258,37 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: "#475569",
   },
+  historyCardWon: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#16a34a",
+  },
+  historyCardLost: {
+    backgroundColor: "#fee2e2",
+    borderColor: "#dc2626",
+  },
+  historyTitleWon: {
+    color: "#166534",
+  },
+  historyTitleLost: {
+    color: "#991b1b",
+  },
+  historyMetaWon: {
+    color: "#166534",
+  },
+  historyMetaLost: {
+    color: "#991b1b",
+  },
+  historyStatus: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  historyStatusWon: {
+    color: "#16a34a",
+  },
+  historyStatusLost: {
+    color: "#dc2626",
+  },
   emptyState: {
     paddingVertical: 20,
     alignItems: "center",
@@ -576,14 +607,33 @@ const PredictionScreen = () => {
   const isRoundLoading = fetchingRound && !currentRound;
 
   const chartData = useMemo(() => {
-    const labels =
-      priceHistory?.map((point) =>
-        new Date(point.timestamp).toLocaleTimeString([], {
+    if (!priceHistory || priceHistory.length === 0) {
+      return {
+        labels: [],
+        datasets: [{ data: [], strokeWidth: 2, color: () => "#38bdf8" }],
+      };
+    }
+
+    const dataset = priceHistory.map((point) => point.price);
+
+    // Reduce labels for mobile - only show every Nth label to avoid cramping
+    // For 30 minutes of data, show ~5-6 labels max
+    const labelInterval = Math.max(1, Math.floor(priceHistory.length / 5));
+    const labels = priceHistory.map((point, index) => {
+      // Only show label for every Nth point, or first/last
+      if (
+        index === 0 ||
+        index === priceHistory.length - 1 ||
+        index % labelInterval === 0
+      ) {
+        return new Date(point.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
-        })
-      ) ?? [];
-    const dataset = priceHistory?.map((point) => point.price) ?? [];
+        });
+      }
+      return ""; // Empty string for skipped labels
+    });
+
     return {
       labels,
       datasets: [
@@ -932,7 +982,7 @@ const PredictionScreen = () => {
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View>
-              <Text style={styles.sectionTitle}>BTC 24h Trend</Text>
+              <Text style={styles.sectionTitle}>BTC 30m Trend</Text>
               <Text style={styles.sectionSubtitle}>
                 Updated live every few seconds
               </Text>
@@ -947,6 +997,7 @@ const PredictionScreen = () => {
                 height={220}
                 withInnerLines={false}
                 withDots={false}
+                segments={4}
                 chartConfig={{
                   backgroundGradientFrom: "#ffffff",
                   backgroundGradientTo: "#ffffff",
@@ -958,9 +1009,17 @@ const PredictionScreen = () => {
                     strokeDasharray: "",
                     strokeWidth: 0,
                   },
+                  propsForLabels: {
+                    fontSize: 10,
+                  },
                 }}
                 bezier
                 style={{ borderRadius: 20 }}
+                formatXLabel={(label) => {
+                  // Return empty string for empty labels to skip rendering
+                  if (!label || label.trim() === "") return "";
+                  return label;
+                }}
               />
             </View>
           ) : (
@@ -978,34 +1037,156 @@ const PredictionScreen = () => {
           {address ? (
             userRounds && userRounds.length > 0 ? (
               <>
-                {userRounds.map((item) => (
-                  <View
-                    key={`${item.round.roundId.toString()}-${
-                      item.bet.direction
-                    }`}
-                    style={styles.historyCard}
-                  >
-                    <Text style={styles.historyTitle}>
-                      Round #{item.round.roundId.toString()}
-                    </Text>
-                    <Text style={styles.historyMeta}>
-                      {item.bet.direction ? "Up" : "Down"} ·{" "}
-                      {formatWeiToCUSD(item.bet.amount)} cUSD
-                    </Text>
-                    <Text style={styles.historyMeta}>
-                      {item.round.resolved
-                        ? item.bet.claimed
-                          ? "Reward claimed"
-                          : item.round.upWon === item.bet.direction
-                            ? "Awaiting claim"
-                            : "Lost"
-                        : "Pending resolution"}
-                    </Text>
-                    <Text style={styles.historyMeta}>
-                      Ends {formatTimestamp(item.round.endTime)}
-                    </Text>
-                  </View>
-                ))}
+                {userRounds
+                  .sort(
+                    (a, b) => Number(b.round.roundId) - Number(a.round.roundId)
+                  )
+                  .map((item) => {
+                    // Calculate if user won
+                    const isResolved = item.round.resolved;
+                    const userWon =
+                      isResolved && item.round.upWon === item.bet.direction;
+                    const userLost = isResolved && !userWon;
+
+                    // Calculate reward for winners
+                    let rewardAmount = 0n;
+                    if (userWon) {
+                      const rewardPool = item.round.upWon
+                        ? item.round.downPool
+                        : item.round.upPool;
+                      const winnerPool = item.round.upWon
+                        ? item.round.upPool
+                        : item.round.downPool;
+
+                      if (rewardPool > 0n && winnerPool > 0n) {
+                        // Winners get bet back + proportional share of loser pool
+                        const proportionalReward =
+                          (item.bet.amount * rewardPool) / winnerPool;
+                        rewardAmount = item.bet.amount + proportionalReward;
+                      } else {
+                        // No losers: just get bet back
+                        rewardAmount = item.bet.amount;
+                      }
+                    }
+
+                    // Determine card style based on status
+                    const cardStyle = [
+                      styles.historyCard,
+                      userWon && styles.historyCardWon,
+                      userLost && styles.historyCardLost,
+                    ];
+
+                    return (
+                      <View
+                        key={`${item.round.roundId.toString()}-${
+                          item.bet.direction
+                        }`}
+                        style={cardStyle}
+                      >
+                        <Text
+                          style={[
+                            styles.historyTitle,
+                            userWon && styles.historyTitleWon,
+                            userLost && styles.historyTitleLost,
+                          ]}
+                        >
+                          Round #{item.round.roundId.toString()}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.historyMeta,
+                            userWon && styles.historyMetaWon,
+                            userLost && styles.historyMetaLost,
+                          ]}
+                        >
+                          {item.bet.direction ? "⬆️ Up" : "⬇️ Down"} ·{" "}
+                          {formatWeiToCUSD(item.bet.amount)} cUSD
+                        </Text>
+                        {isResolved ? (
+                          userWon ? (
+                            <>
+                              <Text
+                                style={[
+                                  styles.historyStatus,
+                                  styles.historyStatusWon,
+                                ]}
+                              >
+                                ✅ Won
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.historyMeta,
+                                  styles.historyMetaWon,
+                                ]}
+                              >
+                                Bet: {formatWeiToCUSD(item.bet.amount)} cUSD
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.historyMeta,
+                                  styles.historyMetaWon,
+                                ]}
+                              >
+                                Received: {formatWeiToCUSD(rewardAmount)} cUSD
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.historyMeta,
+                                  styles.historyMetaWon,
+                                ]}
+                              >
+                                Profit:{" "}
+                                {formatWeiToCUSD(
+                                  rewardAmount - item.bet.amount
+                                )}{" "}
+                                cUSD
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Text
+                                style={[
+                                  styles.historyStatus,
+                                  styles.historyStatusLost,
+                                ]}
+                              >
+                                ❌ Lost
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.historyMeta,
+                                  styles.historyMetaLost,
+                                ]}
+                              >
+                                Lost: {formatWeiToCUSD(item.bet.amount)} cUSD
+                              </Text>
+                            </>
+                          )
+                        ) : (
+                          <Text
+                            style={[
+                              styles.historyMeta,
+                              userWon && styles.historyMetaWon,
+                              userLost && styles.historyMetaLost,
+                            ]}
+                          >
+                            Pending resolution
+                          </Text>
+                        )}
+                        <Text
+                          style={[
+                            styles.historyMeta,
+                            userWon && styles.historyMetaWon,
+                            userLost && styles.historyMetaLost,
+                          ]}
+                        >
+                          {isResolved
+                            ? `Resolved ${formatTimestamp(item.round.endTime)}`
+                            : `Ends ${formatTimestamp(item.round.endTime)}`}
+                        </Text>
+                      </View>
+                    );
+                  })}
               </>
             ) : (
               <View style={styles.emptyState}>
